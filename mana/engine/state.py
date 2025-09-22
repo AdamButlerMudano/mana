@@ -64,7 +64,7 @@ class CreaturePermanent:
         return self.card.toughness
     
     def __post_init__(self):
-        if self.card.type is not CardType.LAND:
+        if self.card.type is not CardType.CREATURE:
             raise ValueError('CreaturePermanent must wrap a CREATURE card')
     
 

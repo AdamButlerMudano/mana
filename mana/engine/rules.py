@@ -37,7 +37,7 @@ def new_game(deck_p0: List[Card], deck_p1: List[Card], seed: int) -> GameState:
         _draw(gs, 0)
         _draw(gs, 1)
     
-    gs.phase = Phase.Draw
+    gs.phase = Phase.DRAW
     gs.active = 0
     gs.turn = 1
 
@@ -50,11 +50,22 @@ def start_turn(gs: GameState) -> None:
     if gs.terminal:
         return
     
-    # Reset per turn state
     p = gs.active_player()
+    
+    # Untap
+    for l in p.battlefield_lands:
+        l.tapped = False
+    for c in p.battlefield_creatures:
+        c.tapped = False
+        c.summoning_sick = False
+
+    # TODO: Add upkeep in later version
+
+    # Reset per turn state
     p.lands_played_this_turn = 0
     p.mana_pool = 0
 
+    # Draw and move to main
     _draw(gs, gs.active)
     gs.phase = Phase.MAIN
 
@@ -136,3 +147,6 @@ def cast_creature(gs: GameState, hand_index: int) -> None:
     p.mana_pool -= cost
     p.hand.pop(hand_index)
     p.battlefield_creatures.append(CreaturePermanent(card=card))
+
+
+
