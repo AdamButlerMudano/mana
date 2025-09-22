@@ -95,3 +95,6 @@ class GameState:
         i = self.active if idx is None else idx
         return 1 - i
     
+    def active_player(self) -> PlayerState:
+        return self.players[self.active]
+    
