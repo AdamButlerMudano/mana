@@ -91,10 +91,14 @@ class GameState:
     winner: Optional[int] = None
     loser: Optional[int] = None
 
-    def opponent(self, idx: Optional[int] = None) -> int:
+    def opp_idx(self, idx: Optional[int] = None) -> int:
         i = self.active if idx is None else idx
         return 1 - i
     
-    def active_player(self) -> PlayerState:
-        return self.players[self.active]
+    def active_player(self, idx: Optional[int] = None ) -> PlayerState:
+        i = self.active if idx is None else idx
+        return self.players[i]
     
+    def opp_player(self, idx: Optional[int] = None) -> PlayerState:
+        i = self.opp_idx(idx)
+        return self.players[i]

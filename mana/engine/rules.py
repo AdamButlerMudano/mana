@@ -70,6 +70,9 @@ def start_turn(gs: GameState) -> None:
     gs.phase = Phase.MAIN
 
 
+# PLAY CARDS ==================================================================================================
+
+
 def play_land(gs: GameState, hand_index: int) -> None:
     # Check play is legal
     if gs.terminal:
@@ -149,4 +152,70 @@ def cast_creature(gs: GameState, hand_index: int) -> None:
     p.battlefield_creatures.append(CreaturePermanent(card=card))
 
 
+# COMBAT ==================================================================================================
 
+
+def begin_combat(gs: GameState) -> None:
+    """Advance from MAIN to COMBAT phase. Simple state switch for now"""
+    if gs.terminal:
+        raise IllegalAction('Game already ended')
+    if gs.phase != Phase.MAIN:
+        raise IllegalAction('Must be in MAIN phase to begin COMBAT.')
+    gs.phase = Phase.COMBAT
+
+
+def declare_attackers(gs: GameState, attacker_indices: list[int]) -> None:
+    """Declare attackers in COMBAT.
+
+    - Only untapped non-summoning sick creatures you control may attack.
+    - Attacking taps the create.
+    - No blockers.
+    - For now move to END after combat.
+    """
+
+    if gs.terminal:
+        raise IllegalAction('Game already ended')
+    
+    if gs.phase != Phase.COMBAT:
+        raise IllegalAction('Cannot declare attackers outside of combat')
+    
+    p = gs.active_player()
+    opp = gs.opp_player()
+
+    # No attackers so move to END
+    if not attacker_indices:
+        gs.phase = Phase.END
+        return
+
+    seen = set()
+    total_power = 0
+    for i in attacker_indices:
+        if i in seen:
+            # Ignore duplicates silently as all attackers will be picked at once. 
+            # We can deduplicate when making the action so dont need to confuse things by raising an illegal action here.
+            continue 
+        seen.add(i)
+
+        try:
+            creature = p.battlefield_creatures[i]
+        except IndexError as e:
+            raise IllegalAction('Attacker index out of range.') from e
+        if creature.tapped:
+            raise IllegalAction('Tapped creature cannot attack.')
+        if creature.summoning_sick:
+            raise IllegalAction('Summoning sick creature cannot attack.')
+
+        creature.tapped = True
+
+        # As there is no blocking we can assign all damage to the opp
+        total_power += creature.power
+
+    opp.life -= total_power
+
+    # Check for lethal
+    if opp.life <= 0:
+        gs.terminal = True
+        gs.winner = gs.active
+        gs.loser = gs.opp_idx()
+
+    gs.phase = Phase.END
