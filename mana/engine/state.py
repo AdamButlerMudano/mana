@@ -57,11 +57,15 @@ class CreaturePermanent:
 
     @property
     def power(self) -> int:
-        return self.card.power
+        if self.card.creature is None:
+            raise ValueError # Needed to avoid pylance warning
+        return self.card.creature.power
     
     @property
     def toughness(self) -> int:
-        return self.card.toughness
+        if self.card.creature is None:
+            raise ValueError
+        return self.card.creature.toughness
     
     def __post_init__(self):
         if self.card.type is not CardType.CREATURE:
