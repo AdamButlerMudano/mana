@@ -7,7 +7,10 @@ name = "mana"
 version = "0.0.1"
 description = "Simplified MTG engine and RL env (starter)"
 requires-python = ">=3.11"
-dependencies = []
+dependencies = [
+    "numpy>=1.26",
+    "gymnasium>=0.29.1"
+]
 
 [project.optional-dependencies]
 dev = [

@@ -6,6 +6,7 @@ from .state import Card, CardType, CreatureInfo, GameState, PlayerState, LandPer
 from .errors import IllegalAction
 
 OPENING_HAND = 7
+HAND_LIMIT = 7
 
 def _shuffle(deck: List[Card], rng: random.Random) -> List[Card]:
     deck_copy = deck[:]
@@ -219,3 +220,56 @@ def declare_attackers(gs: GameState, attacker_indices: list[int]) -> None:
         gs.loser = gs.opp_idx()
 
     gs.phase = Phase.END
+
+
+# END TURN ========================================================================================
+def cleanup(gs: GameState) -> None:
+    """
+    - Empty mana pool
+    - Discard to hand limit
+    - Clear damage from creatures
+    """
+
+    if gs.terminal:
+        return
+    p = gs.active_player()
+    opp = gs.opp_player()
+
+    # Empty mana pool
+    p.mana_pool = 0
+
+    # Discard to hand limit
+    while len(p.hand) > HAND_LIMIT:
+        # Discard the last card in hand for now.
+        p.graveyard.append(p.hand.pop())
+
+    # Clear damage
+    for c in p.battlefield_creatures:
+        c.damage = 0
+    for c in opp.battlefield_creatures:
+        c.damage = 0
+
+
+def end_turn(gs: GameState) -> None:
+    """
+    - Run cleanup
+    - Change active player
+    - Start next turn - for convenience in v0
+    """
+
+    if gs.terminal:
+        return
+    if gs.phase != Phase.END:
+        raise IllegalAction('Can only end turn during END.')
+    
+    # Clean up 
+    cleanup(gs)
+
+    # Pass turn
+    gs.active = gs.opp_idx()
+    gs.turn += 1
+    gs.phase = Phase.DRAW
+
+    # Start next turn
+    start_turn(gs)
+    
