@@ -1,7 +1,7 @@
 import numpy as np
 import gymnasium as gym
 from gymnasium import spaces
-from typing import List, Any
+from typing import List, Any, Dict
 
 from .engine import rules as r
 from .engine.state import GameState, Phase, CardType, Card
@@ -26,7 +26,7 @@ A_ATTACK_BASE = A_TAP_BASE + L_MAX
 N_ACTIONS = A_ATTACK_BASE + (2**C_MAX - 1) 
 
 class MtgEnv(gym.Env):
-    """Gym env for simple non-blocking mtg game"""
+    '''Gym env for simple non-blocking mtg game'''
 
     metadata = {'render.modes': []}
 
@@ -153,5 +153,101 @@ class MtgEnv(gym.Env):
         return idxs
     
 
+    def _encode(self, gs: GameState) -> Dict[str, np.ndarray]:
+        p = gs.active_player()
+        opp = gs.opp_player()
+
+        # Hand
+        hand_type = np.zeros((H_MAX,), dtype=np.int8)
+        hand_cost = np.zeros((H_MAX,), dtype=np.int8)
+        hand_pt = np.zeros((H_MAX, 2), dtype=np.int8)
+
+        for i in range(min(H_MAX, len(p.hand))):
+            c = p.hand[i]
+            if c.type is CardType.LAND:
+                hand_type[i] = 0
+            elif c.type is CardType.CREATURE:
+                if c.creature is None:
+                    raise ValueError('CREATURE CardType should have creature info.')
+                hand_type[i] = 1
+                hand_pt[i, 0] = c.creature.power
+                hand_pt[i, 1] = c.creature.toughness
+            else:
+                hand_type[i] = 2
+            
+            hand_cost[i] = c.cost
+        
+        # Lands
+        lands_tapped = [l.tapped for l in p.battlefield_lands]
+        lands_tapped = np.pad(np.array(lands_tapped, dtype=np.int8), (0, L_MAX-len(lands_tapped)))
+        
+        # Creatures
+        creatures = np.zeros((C_MAX, 4), dtype=np.int8)
+        for i, c in enumerate(p.battlefield_creatures):
+            if i >= C_MAX:
+                raise ValueError('Trying to encode more creatures than C_MAX')
+            creatures[i, 0] = c.power
+            creatures[i, 1] = c.toughness
+            creatures[i, 2] = 1 if c.summoning_sick else 0
+            creatures[i, 3] = 1 if c.tapped else 0
+        
+        obs = {
+            'phase': np.array(gs.phase, dtype=np.int8),
+            'life': np.array([p.life, opp.life], dtype=np.int8),
+            'mana_pool': np.array([p.mana_pool], dtype=np.int8),
+            'lands_played_this_turn': np.array(p.lands_played_this_turn, dtype=np.int8),
+            'hand_type': hand_type,
+            'hand_cost': hand_cost,
+            'hand_pt': hand_pt,
+            'lands_tapped': lands_tapped,
+            'creatures': creatures,
+        }
+
+        return obs
     
+
+    def _action_mask(self, gs: GameState) -> np.ndarray:
+        mask = np.zeros((N_ACTIONS,), dtype=np.int8)
+        p = gs.active_player()
+
+        # Pass always allowed
+        mask[A_PASS] = 1
+
+        if gs.phase == Phase.MAIN:
+            # Play land if we haven't already
+            if p.lands_played_this_turn == 0:
+                for i in range(min(H_MAX, len(p.hand))):
+                    if p.hand[i].type is CardType.LAND:
+                        mask[A_PLAY_BASE + i] = 1
+            # Cast creature
+            for i in range(min(H_MAX, len(p.hand))):
+                c = p.hand[i]
+                if c.type is CardType.CREATURE and p.mana_pool >= c.cost:
+                    mask[A_CAST_BASE + i] = 1
+            # Tap land
+            for i in range(min(L_MAX, len(p.battlefield_lands))):
+                if not p.battlefield_lands[i].tapped:
+                    mask[A_TAP_BASE + i] = 1
+        elif gs.phase == Phase.COMBAT:
+            # Build mask of all eligible attackers
+            eligible_bits = 0
+            for i in range(min(C_MAX, len(p.battlefield_creatures))):
+                c = p.battlefield_creatures[i]
+                if (not c.tapped) and (not c.summoning_sick):
+                    eligible_bits |= (1 << i)
+            # Enable all non-empty subsets of all attackers
+            sub = eligible_bits
+            while sub:
+                idx = A_ATTACK_BASE + (sub - 1) # we sub 1 as the no-attacker mask is the same as a pass
+                if idx < N_ACTIONS:
+                    mask[idx] = 1
+                sub = (sub - 1) & eligible_bits # Iterate down the mask, the & skips to the next legal combination
+        elif gs.phase == Phase.END:
+            # No actions to take at end step in current version
+            pass
+        else:
+            # DRAW isnt accessible to the agent in current version
+            pass
+        
+        return mask
 

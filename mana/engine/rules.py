@@ -2,7 +2,7 @@ from typing import List
 import copy
 import random
 
-from .state import Card, CardType, CreatureInfo, GameState, PlayerState, LandPermanent, CreaturePermanent, Phase
+from .state import Card, CardType, GameState, PlayerState, LandPermanent, CreaturePermanent, Phase
 from .errors import IllegalAction
 
 OPENING_HAND = 7
