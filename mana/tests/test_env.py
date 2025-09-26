@@ -51,18 +51,11 @@ def test_cast_simple_creature_flow(land_only_decks):
     env._gs.players[0].hand.append(make_vanilla_creature('C001', 1, 1, 1))
 
     play0 = env.idx_play_land(0)
-    print(play0)
-
-    print('here1')
     obs, r, term, trunc, info = env.step(play0)
-    print('here2')
-    tap0 = env.idx_tap_land(0)
-    print(tap0)
-    print(env._gs.players[0].battlefield_lands)
 
+    tap0 = env.idx_tap_land(0)
     obs, r, term, trunc, info = env.step(tap0)
-    print('here3')
-    print(len(env._gs.players[0].hand))
+
     cast_idx = env.idx_cast_creature(len(env._gs.players[0].hand) - 1)
     obs, r, term, trunc, info = env.step(cast_idx)
 
@@ -72,5 +65,3 @@ def test_cast_simple_creature_flow(land_only_decks):
     assert creatures[0, 1] == 1
     assert creatures[0, 2] == 1
     assert creatures[0, 3] == 0
-
-

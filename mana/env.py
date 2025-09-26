@@ -46,6 +46,8 @@ class MtgEnv(gym.Env):
             }
         )
         self.action_space = spaces.Discrete(self.N_ACTIONS)
+        self._attack_index_lists = self._precompute_eligible_attacker_submasks()
+        self._attackers_for_masks = self._precompute_attackers_for_masks()
 
     # Action index helpers
     def idx_play_land(self, i: int) -> int: return self.A_PLAY_BASE + i
@@ -103,8 +105,8 @@ class MtgEnv(gym.Env):
             idx = action - self.A_TAP_BASE
             r.tap_land_for_mana(gs, idx)
         else:
-            m = (action - self.A_ATTACK_BASE) + 1
-            attacker_indices = self._bitmask_to_indices(gs, m)
+            m = action - self.A_ATTACK_BASE
+            attacker_indices = list(self._attackers_for_masks[m])
             if gs.phase == Phase.MAIN:
                 r.begin_combat(gs)
             r.declare_attackers(gs, attacker_indices)
@@ -130,6 +132,31 @@ class MtgEnv(gym.Env):
         r.declare_attackers(gs, [])
         r.end_turn(gs)
 
+
+    def _precompute_eligible_attacker_submasks(self) -> List[List[int]]:
+        """For each eligibility bitmask precompute the legal submasks"""
+        all_submasks= []
+        
+        for m in range(1, 2**self.C_MAX):
+            sub = m
+            submasks: List[int] = []
+            while sub:
+                submasks.append(self.A_ATTACK_BASE + (sub-1)) # we sub 1 as the no-attacker mask is the same as a pass
+                sub = (sub -1 ) & m # Iterate down the mask, the & skips to the next legal combination
+            all_submasks.append(submasks)
+        
+        return all_submasks
+
+
+    def _precompute_attackers_for_masks(self) -> List[tuple[int, ...]]:
+        """For each mask precompute which indices these relate to so we dont need to loop the mask at each step."""
+        idx_masks = []
+        for m in range(1, 2**self.C_MAX):
+            idxs = tuple(i for i in range(self.C_MAX) if (m >> i) & 1)
+            idx_masks.append(idxs)
+        
+        return idx_masks
+    
     
     def _bitmask_to_indices(self, gs: GameState, mask_bits: int) -> List[int]:
         p = gs.active_player()
@@ -145,6 +172,7 @@ class MtgEnv(gym.Env):
     
 
     def _encode(self, gs: GameState) -> Dict[str, np.ndarray]:
+        # TODO: Try and move some of these loops to np array slicing
         p = gs.active_player()
         opp = gs.opp_player()
 
@@ -226,13 +254,9 @@ class MtgEnv(gym.Env):
                 c = p.battlefield_creatures[i]
                 if (not c.tapped) and (not c.summoning_sick):
                     eligible_bits |= (1 << i)
-            # Enable all non-empty subsets of all attackers
-            sub = eligible_bits
-            while sub:
-                idx = self.A_ATTACK_BASE + (sub - 1) # we sub 1 as the no-attacker mask is the same as a pass
-                if idx < self.N_ACTIONS:
-                    mask[idx] = 1
-                sub = (sub - 1) & eligible_bits # Iterate down the mask, the & skips to the next legal combination
+            # Retrieve and enable all non-empty subsets of all attackers from precomputed combinations
+            for i in self._attack_index_lists[eligible_bits]:
+                mask[i] = 1
         elif gs.phase == Phase.END:
             # No actions to take at end step in current version
             pass
