@@ -7,23 +7,6 @@ from .engine import rules as r
 from .engine.state import GameState, Phase, CardType, Card
 from .engine.errors import IllegalAction
 
-H_MAX = 10 # Max hand size encoded
-L_MAX = 12 # Max land count encoded
-C_MAX = 10 # Max creature count encoded
-
-# Action Index
-# 0: pass
-# 1 -> H_MAX: play_land(i)
-# H_MAX+1 -> 2*H_MAX: cast_creature(i)
-# 2*H_MAX+1 -> 2*H_MAX+L_MAX: tap_land(i)
-# 2*H_MAX+L_MAX+1 -> 2*H_MAX+L_MAX+(2**C_MAX - 1): combinatoric bitmask of creature to attack with
-
-A_PASS = 0
-A_PLAY_BASE = 1
-A_CAST_BASE = A_PLAY_BASE + H_MAX
-A_TAP_BASE = A_CAST_BASE + H_MAX
-A_ATTACK_BASE = A_TAP_BASE + L_MAX
-N_ACTIONS = A_ATTACK_BASE + (2**C_MAX - 1) 
 
 class MtgEnv(gym.Env):
     '''Gym env for simple non-blocking mtg game'''
@@ -35,37 +18,45 @@ class MtgEnv(gym.Env):
         self._deck0 = deck0
         self._deck1 = deck1
         self._seed = seed
-        self._gs: GameState | None = None
+        self._gs: GameState = r.new_game(self._deck0, self._deck1, seed=self._seed)
+
+        self.H_MAX = 10 # Max hand size encoded
+        self.L_MAX = 12 # Max land count encoded
+        self.C_MAX = 10 # Max creature count encoded
+
+        # Action Index
+        self.A_PASS = 0 # pass
+        self.A_PLAY_BASE = 1 # play_land(i)
+        self.A_CAST_BASE = self.A_PLAY_BASE + self.H_MAX # cast_creature(i)
+        self.A_TAP_BASE = self.A_CAST_BASE + self.H_MAX # tap_land(i)
+        self.A_ATTACK_BASE = self.A_TAP_BASE + self.L_MAX # attack with creature mask(n)
+        self.N_ACTIONS = self.A_ATTACK_BASE + (2**self.C_MAX - 1) # combinatoric bitmask of creature to attack with
 
         self.obs_space = spaces.Dict(
             {
                 'phase': spaces.Discrete(4),
                 'life': spaces.Box(low=0, high=20, shape=(2,), dtype=np.int8), # increase when we enable life gain
-                'mana_pool': spaces.Box(low=0, high=L_MAX, shape=(1,), dtype=np.int8),
+                'mana_pool': spaces.Box(low=0, high=self.L_MAX, shape=(1,), dtype=np.int8),
                 'lands_played_this_turn': spaces.Discrete(2),
-                'hand_type': spaces.Box(low=0, high=2, shape=(H_MAX,), dtype=np.int8), # enum of card type for each card in hand
-                'hand_cost': spaces.Box(low=0, high=20, shape=(H_MAX,), dtype=np.int8),
-                'hand_pt': spaces.Box(low=0, high=20, shape=(H_MAX, 2), dtype=np.int8),
-                'lands_tapped': spaces.MultiBinary(L_MAX),
-                'creatures': spaces.Box(low=0, high=20, shape=(C_MAX, 4), dtype=np.int8) # power, toughness, summoning_sick, tapped
+                'hand_type': spaces.Box(low=0, high=2, shape=(self.H_MAX,), dtype=np.int8), # enum of card type for each card in hand
+                'hand_cost': spaces.Box(low=0, high=20, shape=(self.H_MAX,), dtype=np.int8),
+                'hand_pt': spaces.Box(low=0, high=20, shape=(self.H_MAX, 2), dtype=np.int8),
+                'lands_tapped': spaces.MultiBinary(self.L_MAX),
+                'creatures': spaces.Box(low=0, high=20, shape=(self.C_MAX, 4), dtype=np.int8) # power, toughness, summoning_sick, tapped
             }
         )
-        self.action_space = spaces.Discrete(N_ACTIONS)
+        self.action_space = spaces.Discrete(self.N_ACTIONS)
 
     # Action index helpers
-    @staticmethod
-    def idx_play_land(i: int) -> int: return A_PLAY_BASE + i
+    def idx_play_land(self, i: int) -> int: return self.A_PLAY_BASE + i
 
-    @staticmethod
-    def idx_cast_creature(i: int) -> int: return A_CAST_BASE + i
+    def idx_cast_creature(self, i: int) -> int: return self.A_CAST_BASE + i
 
-    @staticmethod
-    def idx_tap_land(i: int) -> int: return A_TAP_BASE + i
+    def idx_tap_land(self, i: int) -> int: return self.A_TAP_BASE + i
 
-    @staticmethod
-    def idx_attack_mask(mask_num: int) -> int:
-        assert 1<= mask_num < 2**C_MAX
-        return A_ATTACK_BASE + (mask_num - 1)
+    def idx_attack_mask(self, mask_num: int) -> int:
+        assert 1<= mask_num < 2**self.C_MAX
+        return self.A_ATTACK_BASE + (mask_num - 1)
 
 
     def reset(self, *, seed: int | None = None, options: dict[str, Any] | None = None) -> tuple[Any, dict[str, Any]]:
@@ -86,12 +77,12 @@ class MtgEnv(gym.Env):
         assert self._gs is not None, 'GameState does not exists, call reset() first'
         gs = self._gs
         mask = self._action_mask(gs)
-        
-        if action < 0 or action >= N_ACTIONS or mask[action == 0]:
+
+        if action < 0 or action >= self.N_ACTIONS or mask[action] == 0:
             raise IllegalAction('Illegal or masked action selected')
         
         # Map action -> rules
-        if action == A_PASS:
+        if action == self.A_PASS:
             if gs.phase == Phase.MAIN:
                 r.begin_combat(gs)
             elif gs.phase == Phase.COMBAT:
@@ -102,17 +93,17 @@ class MtgEnv(gym.Env):
                 # Auto pass opp back to our MAIN
                 if not gs.terminal:
                     self._auto_pass_opponent(gs)
-        elif A_PLAY_BASE <= action < A_CAST_BASE:
-            idx = action - A_PLAY_BASE
+        elif self.A_PLAY_BASE <= action < self.A_CAST_BASE:
+            idx = action - self.A_PLAY_BASE
             r.play_land(gs, idx)
-        elif A_CAST_BASE <= action < A_ATTACK_BASE:
-            idx = action - A_CAST_BASE
+        elif self.A_CAST_BASE <= action < self.A_TAP_BASE:
+            idx = action - self.A_CAST_BASE
             r.cast_creature(gs, idx)
-        elif A_TAP_BASE <= action <= A_ATTACK_BASE:
-            idx = action - A_TAP_BASE
+        elif self.A_TAP_BASE <= action < self.A_ATTACK_BASE:
+            idx = action - self.A_TAP_BASE
             r.tap_land_for_mana(gs, idx)
         else:
-            m = (action - A_ATTACK_BASE) + 1
+            m = (action - self.A_ATTACK_BASE) + 1
             attacker_indices = self._bitmask_to_indices(gs, m)
             if gs.phase == Phase.MAIN:
                 r.begin_combat(gs)
@@ -142,7 +133,7 @@ class MtgEnv(gym.Env):
     
     def _bitmask_to_indices(self, gs: GameState, mask_bits: int) -> List[int]:
         p = gs.active_player()
-        n = min(C_MAX, len(p.battlefield_creatures))
+        n = min(self.C_MAX, len(p.battlefield_creatures))
         idxs: List[int] = []
 
         for i in range(n):
@@ -158,11 +149,11 @@ class MtgEnv(gym.Env):
         opp = gs.opp_player()
 
         # Hand
-        hand_type = np.zeros((H_MAX,), dtype=np.int8)
-        hand_cost = np.zeros((H_MAX,), dtype=np.int8)
-        hand_pt = np.zeros((H_MAX, 2), dtype=np.int8)
+        hand_type = np.zeros((self.H_MAX,), dtype=np.int8)
+        hand_cost = np.zeros((self.H_MAX,), dtype=np.int8)
+        hand_pt = np.zeros((self.H_MAX, 2), dtype=np.int8)
 
-        for i in range(min(H_MAX, len(p.hand))):
+        for i in range(min(self.H_MAX, len(p.hand))):
             c = p.hand[i]
             if c.type is CardType.LAND:
                 hand_type[i] = 0
@@ -179,13 +170,13 @@ class MtgEnv(gym.Env):
         
         # Lands
         lands_tapped = [l.tapped for l in p.battlefield_lands]
-        lands_tapped = np.pad(np.array(lands_tapped, dtype=np.int8), (0, L_MAX-len(lands_tapped)))
+        lands_tapped = np.pad(np.array(lands_tapped, dtype=np.int8), (0, self.L_MAX-len(lands_tapped)))
         
         # Creatures
-        creatures = np.zeros((C_MAX, 4), dtype=np.int8)
+        creatures = np.zeros((self.C_MAX, 4), dtype=np.int8)
         for i, c in enumerate(p.battlefield_creatures):
-            if i >= C_MAX:
-                raise ValueError('Trying to encode more creatures than C_MAX')
+            if i >= self.C_MAX:
+                raise ValueError('Trying to encode more creatures than self.C_MAX')
             creatures[i, 0] = c.power
             creatures[i, 1] = c.toughness
             creatures[i, 2] = 1 if c.summoning_sick else 0
@@ -207,39 +198,39 @@ class MtgEnv(gym.Env):
     
 
     def _action_mask(self, gs: GameState) -> np.ndarray:
-        mask = np.zeros((N_ACTIONS,), dtype=np.int8)
+        mask = np.zeros((self.N_ACTIONS,), dtype=np.int8)
         p = gs.active_player()
 
         # Pass always allowed
-        mask[A_PASS] = 1
+        mask[self.A_PASS] = 1
 
         if gs.phase == Phase.MAIN:
             # Play land if we haven't already
             if p.lands_played_this_turn == 0:
-                for i in range(min(H_MAX, len(p.hand))):
+                for i in range(min(self.H_MAX, len(p.hand))):
                     if p.hand[i].type is CardType.LAND:
-                        mask[A_PLAY_BASE + i] = 1
+                        mask[self.A_PLAY_BASE + i] = 1
             # Cast creature
-            for i in range(min(H_MAX, len(p.hand))):
+            for i in range(min(self.H_MAX, len(p.hand))):
                 c = p.hand[i]
                 if c.type is CardType.CREATURE and p.mana_pool >= c.cost:
-                    mask[A_CAST_BASE + i] = 1
+                    mask[self.A_CAST_BASE + i] = 1
             # Tap land
-            for i in range(min(L_MAX, len(p.battlefield_lands))):
+            for i in range(min(self.L_MAX, len(p.battlefield_lands))):
                 if not p.battlefield_lands[i].tapped:
-                    mask[A_TAP_BASE + i] = 1
+                    mask[self.A_TAP_BASE + i] = 1
         elif gs.phase == Phase.COMBAT:
             # Build mask of all eligible attackers
             eligible_bits = 0
-            for i in range(min(C_MAX, len(p.battlefield_creatures))):
+            for i in range(min(self.C_MAX, len(p.battlefield_creatures))):
                 c = p.battlefield_creatures[i]
                 if (not c.tapped) and (not c.summoning_sick):
                     eligible_bits |= (1 << i)
             # Enable all non-empty subsets of all attackers
             sub = eligible_bits
             while sub:
-                idx = A_ATTACK_BASE + (sub - 1) # we sub 1 as the no-attacker mask is the same as a pass
-                if idx < N_ACTIONS:
+                idx = self.A_ATTACK_BASE + (sub - 1) # we sub 1 as the no-attacker mask is the same as a pass
+                if idx < self.N_ACTIONS:
                     mask[idx] = 1
                 sub = (sub - 1) & eligible_bits # Iterate down the mask, the & skips to the next legal combination
         elif gs.phase == Phase.END:
@@ -250,4 +241,6 @@ class MtgEnv(gym.Env):
             pass
         
         return mask
+
+
 
