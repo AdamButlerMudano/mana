@@ -141,7 +141,7 @@ class MtgEnv(gym.Env):
             sub = m
             submasks: List[int] = []
             while sub:
-                submasks.append(self.A_ATTACK_BASE + (sub-1)) # we sub 1 as the no-attacker mask is the same as a pass
+                submasks.append(sub-1) # we sub 1 as the no-attacker mask is the same as a pass
                 sub = (sub -1 ) & m # Iterate down the mask, the & skips to the next legal combination
             all_submasks.append(submasks)
         
@@ -176,30 +176,45 @@ class MtgEnv(gym.Env):
         p = gs.active_player()
         opp = gs.opp_player()
 
+        # Scalars
+        phase =  np.array(gs.phase, dtype=np.int8)
+        life = np.array([p.life, opp.life], dtype=np.int8)
+        mana_pool = np.array([p.mana_pool], dtype=np.int8)
+        lands_played_this_turn =  np.array(p.lands_played_this_turn, dtype=np.int8)
+
         # Hand
         hand_type = np.zeros((self.H_MAX,), dtype=np.int8)
         hand_cost = np.zeros((self.H_MAX,), dtype=np.int8)
         hand_pt = np.zeros((self.H_MAX, 2), dtype=np.int8)
 
-        for i in range(min(self.H_MAX, len(p.hand))):
-            c = p.hand[i]
-            if c.type is CardType.LAND:
-                hand_type[i] = 0
-            elif c.type is CardType.CREATURE:
-                if c.creature is None:
-                    raise ValueError('CREATURE CardType should have creature info.')
-                hand_type[i] = 1
-                hand_pt[i, 0] = c.creature.power
-                hand_pt[i, 1] = c.creature.toughness
-            else:
-                hand_type[i] = 2
-            
-            hand_cost[i] = c.cost
+        nH = min(self.H_MAX, len(p.hand))
+        if nH:
+            hslice = p.hand[:nH]
+            hand_type[:nH] = np.fromiter(
+                (0 if c.type is CardType.LAND else (1 if c.type is CardType.CREATURE else 2)
+                for c in hslice),
+                dtype=np.int8, count=nH
+            )
+            hand_cost[:nH] = np.fromiter((c.cost for c in hslice), dtype=np.int8, count=nH)
+
+            for i, c in enumerate(hslice):
+                if c.type is CardType.CREATURE:
+                    if c.creature is None:
+                        raise ValueError('CREATURE CardType should have creature info.')
+                    
+                    # if you keep the invariant, creature info is guaranteed non-None
+                    hand_pt[i, 0] = c.creature.power
+                    hand_pt[i, 1] = c.creature.toughness
         
         # Lands
-        lands_tapped = [l.tapped for l in p.battlefield_lands]
-        lands_tapped = np.pad(np.array(lands_tapped, dtype=np.int8), (0, self.L_MAX-len(lands_tapped)))
-        
+        lands_tapped = np.zeros((self.L_MAX,), dtype=np.int8)
+        nL = min(self.L_MAX, len(p.battlefield_lands))
+        if nL:
+            # np.pad copies and reallocates the array, whereas fromiter with count allows np to allocate the memory once up from which is faster.
+            lands_tapped[:nL] = np.fromiter(
+                (1 if l.tapped else 0 for l in p.battlefield_lands[:nL]), dtype=np.int8, count=nL
+            )
+
         # Creatures
         creatures = np.zeros((self.C_MAX, 4), dtype=np.int8)
         for i, c in enumerate(p.battlefield_creatures):
@@ -211,10 +226,10 @@ class MtgEnv(gym.Env):
             creatures[i, 3] = 1 if c.tapped else 0
         
         obs = {
-            'phase': np.array(gs.phase, dtype=np.int8),
-            'life': np.array([p.life, opp.life], dtype=np.int8),
-            'mana_pool': np.array([p.mana_pool], dtype=np.int8),
-            'lands_played_this_turn': np.array(p.lands_played_this_turn, dtype=np.int8),
+            'phase': phase,
+            'life': life,
+            'mana_pool': mana_pool,
+            'lands_played_this_turn': lands_played_this_turn,
             'hand_type': hand_type,
             'hand_cost': hand_cost,
             'hand_pt': hand_pt,
@@ -254,9 +269,15 @@ class MtgEnv(gym.Env):
                 c = p.battlefield_creatures[i]
                 if (not c.tapped) and (not c.summoning_sick):
                     eligible_bits |= (1 << i)
+
+            # If no valid attackers remain we pass
+            if eligible_bits == 0:
+                pass
+
             # Retrieve and enable all non-empty subsets of all attackers from precomputed combinations
-            for i in self._attack_index_lists[eligible_bits]:
-                mask[i] = 1
+            for i in self._attack_index_lists[eligible_bits-1]:
+                mask[self.A_ATTACK_BASE + i] = 1
+            
         elif gs.phase == Phase.END:
             # No actions to take at end step in current version
             pass
@@ -265,6 +286,3 @@ class MtgEnv(gym.Env):
             pass
         
         return mask
-
-
-

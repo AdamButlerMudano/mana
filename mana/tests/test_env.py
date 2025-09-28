@@ -1,10 +1,11 @@
 import numpy as np
 from gymnasium.spaces import Discrete
+import pytest
 
 from mana.engine.state import Phase
 from mana.env import MtgEnv
-from mana.engine.rules import new_game
-from mana.tests.factories import make_lands, make_vanilla_creature
+from mana.engine.errors import IllegalAction
+from mana.tests.factories import make_land, make_vanilla_creature
 
 def _make_land_only_env(land_only_decks, seed=1):
     return MtgEnv(*land_only_decks(), seed=seed)
@@ -65,3 +66,98 @@ def test_cast_simple_creature_flow(land_only_decks):
     assert creatures[0, 1] == 1
     assert creatures[0, 2] == 1
     assert creatures[0, 3] == 0
+
+
+def test_mask_main_phase_play_tap_cast(land_only_decks):
+    env = _make_land_only_env(land_only_decks)
+    obs, info = env.reset()
+
+    # Force hand to [land, creature]
+    p = env._gs.active_player()
+    p.hand.clear()
+    p.hand.append(make_land('L001'))
+    p.hand.append(make_vanilla_creature('C001', 1, 1, 1))
+
+    m = env._action_mask(env._gs)
+    assert m[env.A_PASS] == 1
+    assert m[env.A_PLAY_BASE] == 1
+    print(m[env.A_CAST_BASE: env.A_CAST_BASE+3])
+    assert m[env.A_CAST_BASE] == 0
+    assert m[env.A_TAP_BASE] == 0
+    
+    env.step(env.A_PLAY_BASE)
+    m = env._action_mask(env._gs)
+    assert m[env.A_PLAY_BASE] == 0
+    assert m[env.A_CAST_BASE] == 0
+    assert m[env.A_TAP_BASE] == 1
+
+    env.step(env.A_TAP_BASE)
+    m = env._action_mask(env._gs)
+    assert m[env.A_CAST_BASE] == 1
+    assert m[env.A_TAP_BASE] == 0
+    
+
+def test_mask_combat_phase_attack_subsets(land_only_decks):
+    env = _make_land_only_env(land_only_decks)
+    obs, info = env.reset()
+    gs = env._gs
+    p = gs.active_player()
+
+    # Force hand and play a 1/1
+    p.hand.clear()
+    p.hand.append(make_land('L001'))
+    p.hand.append(make_vanilla_creature('C001', 1, 1, 1))
+    env.step(env.A_PLAY_BASE)
+    env.step(env.A_TAP_BASE)
+    env.step(env.A_CAST_BASE)
+
+    # Pass combat, declare attackers and end (which will auto pass through opp turn to our MAIN)
+    env.step(env.A_PASS)
+    env.step(env.A_PASS)
+    env.step(env.A_PASS)
+    
+    # Play another creature and clear summoning sickness
+    p.hand.clear()
+    p.hand.append(make_land('L001'))
+    p.hand.append(make_vanilla_creature('C001', 1, 1, 1))
+    env.step(env.A_PLAY_BASE)
+    env.step(env.A_TAP_BASE)
+    env.step(env.A_CAST_BASE)
+    p.battlefield_creatures[1].summoning_sick = False
+
+    # Move to combat
+    env.step(env.A_PASS)
+    m = env._action_mask(env._gs)
+    enabled = np.flatnonzero(m)
+    attack_enabled = [i for i in enabled if i >= env.A_ATTACK_BASE]
+    
+    assert len(attack_enabled) == 3
+    
+    p.battlefield_creatures[0].tapped = True
+    m = env._action_mask(env._gs)
+    enabled = np.flatnonzero(m)
+    attack_enabled = [i for i in enabled if i >= env.A_ATTACK_BASE]
+    
+    assert len(attack_enabled) == 1
+    assert attack_enabled[0] - env.A_ATTACK_BASE == 1
+
+
+def test_mask_end_phase_only_pass(land_only_decks):
+    env = _make_land_only_env(land_only_decks)
+    obs, info = env.reset()
+    env.step(env.A_PASS)
+    env.step(env.A_PASS)
+    m = env._action_mask(env._gs)
+
+    assert m[env.A_PASS] == 1
+    assert m.sum() == 1
+
+
+def test_masked_action_raises(land_only_decks):
+    env = _make_land_only_env(land_only_decks)
+    obs, info = env.reset()
+
+    m = info['action_mask']
+    illegal = int(np.flatnonzero(m == 0)[0])
+    with pytest.raises(IllegalAction):
+        env.step(illegal)
