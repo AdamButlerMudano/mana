@@ -127,12 +127,15 @@ def test_mask_combat_phase_attack_subsets(land_only_decks):
 
     # Move to combat
     env.step(env.A_PASS)
+    
+    # Multiple attackers
     m = env._action_mask(env._gs)
     enabled = np.flatnonzero(m)
     attack_enabled = [i for i in enabled if i >= env.A_ATTACK_BASE]
     
     assert len(attack_enabled) == 3
     
+    # Single attacker
     p.battlefield_creatures[0].tapped = True
     m = env._action_mask(env._gs)
     enabled = np.flatnonzero(m)
@@ -140,6 +143,14 @@ def test_mask_combat_phase_attack_subsets(land_only_decks):
     
     assert len(attack_enabled) == 1
     assert attack_enabled[0] - env.A_ATTACK_BASE == 1
+
+    # No attackers
+    p.battlefield_creatures[1].tapped = True
+    m = env._action_mask(env._gs)
+    enabled = np.flatnonzero(m)
+    attack_enabled = [i for i in enabled if i >= env.A_ATTACK_BASE]
+    
+    assert len(attack_enabled) == 0
 
 
 def test_mask_end_phase_only_pass(land_only_decks):

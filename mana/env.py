@@ -189,6 +189,7 @@ class MtgEnv(gym.Env):
 
         nH = min(self.H_MAX, len(p.hand))
         if nH:
+            # May want to add a warning if we are truncating.
             hslice = p.hand[:nH]
             hand_type[:nH] = np.fromiter(
                 (0 if c.type is CardType.LAND else (1 if c.type is CardType.CREATURE else 2)
@@ -211,6 +212,7 @@ class MtgEnv(gym.Env):
         nL = min(self.L_MAX, len(p.battlefield_lands))
         if nL:
             # np.pad copies and reallocates the array, whereas fromiter with count allows np to allocate the memory once up from which is faster.
+            # May want to add a warning if we are truncating.
             lands_tapped[:nL] = np.fromiter(
                 (1 if l.tapped else 0 for l in p.battlefield_lands[:nL]), dtype=np.int8, count=nL
             )
@@ -219,7 +221,9 @@ class MtgEnv(gym.Env):
         creatures = np.zeros((self.C_MAX, 4), dtype=np.int8)
         for i, c in enumerate(p.battlefield_creatures):
             if i >= self.C_MAX:
-                raise ValueError('Trying to encode more creatures than self.C_MAX')
+                # May want to add a warning if we are truncating creatures.
+                break
+                #raise ValueError('Trying to encode more creatures than self.C_MAX')
             creatures[i, 0] = c.power
             creatures[i, 1] = c.toughness
             creatures[i, 2] = 1 if c.summoning_sick else 0
@@ -272,7 +276,7 @@ class MtgEnv(gym.Env):
 
             # If no valid attackers remain we pass
             if eligible_bits == 0:
-                pass
+                return mask
 
             # Retrieve and enable all non-empty subsets of all attackers from precomputed combinations
             for i in self._attack_index_lists[eligible_bits-1]:
