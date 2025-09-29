@@ -44,10 +44,11 @@ def main():
     parser.add_argument('--max-steps', type=int, default=500)
     args = parser.parse_args()
 
-    env = MtgEnv(*vanilla_decks(), seed=args.seed)
+    env = MtgEnv(*vanilla_decks(), seed=args.seed, opp_type='simple')
 
     rewards, steps, num_wins = [], [], 0
     for ep in range(args.episodes):
+        #print('Episode: ', ep)
         reward, n, term = run_episode(env, args.max_steps, seed=args.seed + ep)
         rewards.append(reward)
         steps.append(n)

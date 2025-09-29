@@ -13,10 +13,11 @@ class MtgEnv(gym.Env):
 
     metadata = {'render.modes': []}
 
-    def __init__(self, deck0: List[Card], deck1: List[Card], seed: int=1) -> None:
+    def __init__(self, deck0: List[Card], deck1: List[Card], opp_type: str = 'simple', seed: int=1) -> None:
         super().__init__()
         self._deck0 = deck0
         self._deck1 = deck1
+        self.opp_type = opp_type
         self._seed = seed
         self._gs: GameState = r.new_game(self._deck0, self._deck1, seed=self._seed)
 
@@ -94,7 +95,13 @@ class MtgEnv(gym.Env):
                 
                 # Auto pass opp back to our MAIN
                 if not gs.terminal:
-                    self._auto_pass_opponent(gs)
+                    if self.opp_type == 'autopass':
+                        self._auto_pass_opponent(gs)
+                    elif self.opp_type == 'simple':
+                        self._simple_opponent(gs)
+                    else:
+                        raise ValueError(f'Unexpected opp type: {self.opp_type}')
+            
         elif self.A_PLAY_BASE <= action < self.A_CAST_BASE:
             idx = action - self.A_PLAY_BASE
             r.play_land(gs, idx)
@@ -131,6 +138,47 @@ class MtgEnv(gym.Env):
         r.begin_combat(gs)
         r.declare_attackers(gs, [])
         r.end_turn(gs)
+
+    
+    def _simple_opponent(self, gs: GameState) -> None:
+        # Assume this is envoked at the opponents MAIN
+        if gs.active != 1 or gs.terminal:
+            return
+        
+        while gs.active == 1 and not gs.terminal:
+            p = gs.players[1]
+            if gs.phase == Phase.DRAW:
+                r.start_turn(gs)
+                continue
+            elif gs.phase == Phase.MAIN:
+                # Play a land if we havent already
+                if p.lands_played_this_turn == 0:
+                    lands = [i for i, c in enumerate(p.hand) if c.type is CardType.LAND]
+                    if lands:
+                        r.play_land(gs, lands[0])
+                # Tap enough lands to cast cheapest creature
+                cheapest_cost = min((c.cost for c in p.hand if c.type is CardType.CREATURE), default=None)
+                if cheapest_cost is not None:
+                    if cheapest_cost <= len(p.battlefield_lands):
+                        while p.mana_pool < cheapest_cost:
+                            untapped = [i for i, l in enumerate(p.battlefield_lands) if not l.tapped]
+                            r.tap_land_for_mana(gs, untapped[0])
+
+                        # Cast cheapest creature
+                        for i, c in enumerate(p.hand):
+                            if c.type is CardType.CREATURE and p.mana_pool >= c.cost:
+                                r.cast_creature(gs, i)
+                                break
+                r.begin_combat(gs)
+                continue
+            elif gs.phase == Phase.COMBAT:
+                # Swing with all eligible
+                attackers = [i for i, c in enumerate(p.battlefield_creatures) if (not c.tapped) and (not c.summoning_sick)]
+                r.declare_attackers(gs, attackers)
+                continue
+            elif gs.phase == Phase.END:
+                r.end_turn(gs)
+                break
 
 
     def _precompute_eligible_attacker_submasks(self) -> List[List[int]]:
