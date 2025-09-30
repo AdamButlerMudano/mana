@@ -25,7 +25,9 @@ def test_reset_shapes_and_mask(land_only_decks):
         'hand_cost', 
         'hand_pt', 
         'lands_tapped', 
-        'creatures'
+        'creatures',
+        'opp_lands_tapped',
+        'opp_creatures'
     }
     assert isinstance(env.action_space, Discrete)
     assert mask.shape[0] == env.action_space.n

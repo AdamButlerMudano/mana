@@ -44,7 +44,9 @@ class MtgEnv(gym.Env):
                 'hand_cost': spaces.Box(low=0, high=20, shape=(self.H_MAX,), dtype=np.float32),
                 'hand_pt': spaces.Box(low=0, high=20, shape=(self.H_MAX, 2), dtype=np.float32),
                 'lands_tapped': spaces.MultiBinary(self.L_MAX),
-                'creatures': spaces.Box(low=0, high=20, shape=(self.C_MAX, 4), dtype=np.float32) # power, toughness, summoning_sick, tapped
+                'creatures': spaces.Box(low=0, high=20, shape=(self.C_MAX, 4), dtype=np.float32), # power, toughness, summoning_sick, tapped
+                'opp_lands_tapped': spaces.MultiBinary(self.L_MAX),
+                'opp_creatures': spaces.Box(low=0, high=20, shape=(self.C_MAX, 4), dtype=np.float32), # power, toughness, summoning_sick, tapped
             }
         )
         self.action_space = spaces.Discrete(self.N_ACTIONS)
@@ -278,6 +280,29 @@ class MtgEnv(gym.Env):
             creatures[i, 2] = 1 if c.summoning_sick else 0
             creatures[i, 3] = 1 if c.tapped else 0
         
+        # Opp Lands
+        opp_lands_tapped = np.zeros((self.L_MAX,), dtype=np.int8)
+        nOL = min(self.L_MAX, len(opp.battlefield_lands))
+        print(nOL)
+        if nOL:
+            print('here2')
+            opp_lands_tapped[:nOL] = np.fromiter(
+                (1 if l.tapped else 0 for l in opp.battlefield_lands[:nOL]), dtype=np.int8, count=nOL
+            )
+
+        # Opp Creatures
+        opp_creatures = np.zeros((self.C_MAX, 4), dtype=np.float32)
+        for i, c in enumerate(opp.battlefield_creatures):
+            if i >= self.C_MAX:
+                # May want to add a warning if we are truncating creatures.
+                break
+                #raise ValueError('Trying to encode more creatures than self.C_MAX')
+            opp_creatures[i, 0] = c.power
+            opp_creatures[i, 1] = c.toughness
+            opp_creatures[i, 2] = 1 if c.summoning_sick else 0
+            opp_creatures[i, 3] = 1 if c.tapped else 0
+
+
         obs = {
             'phase': phase,
             'life': life,
@@ -288,6 +313,8 @@ class MtgEnv(gym.Env):
             'hand_pt': hand_pt,
             'lands_tapped': lands_tapped,
             'creatures': creatures,
+            'opp_lands_tapped': opp_lands_tapped,
+            'opp_creatures': opp_creatures
         }
 
         return obs
