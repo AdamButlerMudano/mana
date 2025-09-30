@@ -33,17 +33,18 @@ class MtgEnv(gym.Env):
         self.A_ATTACK_BASE = self.A_TAP_BASE + self.L_MAX # attack with creature mask(n)
         self.N_ACTIONS = self.A_ATTACK_BASE + (2**self.C_MAX - 1) # combinatoric bitmask of creature to attack with
 
-        self.obs_space = spaces.Dict(
+        #s3b will cast to np.float32 anyway so better to set here from the start
+        self.observation_space = spaces.Dict(
             {
                 'phase': spaces.Discrete(4),
-                'life': spaces.Box(low=0, high=20, shape=(2,), dtype=np.int8), # increase when we enable life gain
-                'mana_pool': spaces.Box(low=0, high=self.L_MAX, shape=(1,), dtype=np.int8),
+                'life': spaces.Box(low=0, high=20, shape=(2,), dtype=np.float32), # increase when we enable life gain
+                'mana_pool': spaces.Box(low=0, high=self.L_MAX, shape=(1,), dtype=np.float32),
                 'lands_played_this_turn': spaces.Discrete(2),
-                'hand_type': spaces.Box(low=0, high=2, shape=(self.H_MAX,), dtype=np.int8), # enum of card type for each card in hand
-                'hand_cost': spaces.Box(low=0, high=20, shape=(self.H_MAX,), dtype=np.int8),
-                'hand_pt': spaces.Box(low=0, high=20, shape=(self.H_MAX, 2), dtype=np.int8),
+                'hand_type': spaces.Box(low=0, high=2, shape=(self.H_MAX,), dtype=np.float32), # enum of card type for each card in hand
+                'hand_cost': spaces.Box(low=0, high=20, shape=(self.H_MAX,), dtype=np.float32),
+                'hand_pt': spaces.Box(low=0, high=20, shape=(self.H_MAX, 2), dtype=np.float32),
                 'lands_tapped': spaces.MultiBinary(self.L_MAX),
-                'creatures': spaces.Box(low=0, high=20, shape=(self.C_MAX, 4), dtype=np.int8) # power, toughness, summoning_sick, tapped
+                'creatures': spaces.Box(low=0, high=20, shape=(self.C_MAX, 4), dtype=np.float32) # power, toughness, summoning_sick, tapped
             }
         )
         self.action_space = spaces.Discrete(self.N_ACTIONS)
@@ -225,15 +226,15 @@ class MtgEnv(gym.Env):
         opp = gs.opp_player()
 
         # Scalars
-        phase =  np.array(gs.phase, dtype=np.int8)
-        life = np.array([p.life, opp.life], dtype=np.int8)
-        mana_pool = np.array([p.mana_pool], dtype=np.int8)
+        phase =  np.array(gs.phase, dtype=np.float32)
+        life = np.array([p.life, opp.life], dtype=np.float32)
+        mana_pool = np.array([p.mana_pool], dtype=np.float32)
         lands_played_this_turn =  np.array(p.lands_played_this_turn, dtype=np.int8)
 
         # Hand
-        hand_type = np.zeros((self.H_MAX,), dtype=np.int8)
-        hand_cost = np.zeros((self.H_MAX,), dtype=np.int8)
-        hand_pt = np.zeros((self.H_MAX, 2), dtype=np.int8)
+        hand_type = np.zeros((self.H_MAX,), dtype=np.float32)
+        hand_cost = np.zeros((self.H_MAX,), dtype=np.float32)
+        hand_pt = np.zeros((self.H_MAX, 2), dtype=np.float32)
 
         nH = min(self.H_MAX, len(p.hand))
         if nH:
@@ -242,9 +243,9 @@ class MtgEnv(gym.Env):
             hand_type[:nH] = np.fromiter(
                 (0 if c.type is CardType.LAND else (1 if c.type is CardType.CREATURE else 2)
                 for c in hslice),
-                dtype=np.int8, count=nH
+                dtype=np.float32, count=nH
             )
-            hand_cost[:nH] = np.fromiter((c.cost for c in hslice), dtype=np.int8, count=nH)
+            hand_cost[:nH] = np.fromiter((c.cost for c in hslice), dtype=np.float32, count=nH)
 
             for i, c in enumerate(hslice):
                 if c.type is CardType.CREATURE:
@@ -266,7 +267,7 @@ class MtgEnv(gym.Env):
             )
 
         # Creatures
-        creatures = np.zeros((self.C_MAX, 4), dtype=np.int8)
+        creatures = np.zeros((self.C_MAX, 4), dtype=np.float32)
         for i, c in enumerate(p.battlefield_creatures):
             if i >= self.C_MAX:
                 # May want to add a warning if we are truncating creatures.
@@ -338,3 +339,8 @@ class MtgEnv(gym.Env):
             pass
         
         return mask
+
+
+    def action_mask(self):
+        # Thin wrapper for easy retrieval of current action mask for usage of sb3 ActionMasker
+        return self._action_mask(self._gs)
