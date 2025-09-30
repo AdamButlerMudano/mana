@@ -341,6 +341,7 @@ class MtgEnv(gym.Env):
         return mask
 
 
-    def action_mask(self):
+    def action_masks(self):
         # Thin wrapper for easy retrieval of current action mask for usage of sb3 ActionMasker
+        assert self._gs is not None
         return self._action_mask(self._gs)
