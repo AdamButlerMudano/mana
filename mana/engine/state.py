@@ -10,6 +10,11 @@ class Phase(IntEnum):
     COMBAT = 2
     END = 3
 
+class CombatStep(Enum):
+    DECLARE_ATTACKERS = 0
+    DECLARE_BLOCKERS = 1
+    DAMAGE = 2
+
 
 class CardType(str, Enum):
     LAND = 'Land'
@@ -72,6 +77,14 @@ class CreaturePermanent:
             raise ValueError('CreaturePermanent must wrap a CREATURE card')
     
 
+@dataclass
+class CombatState:
+    step: CombatStep
+    defending: int # Defending player idx
+    attackers: List[int] = field(default_factory=list) # Declared attacker idxs, need to move to permanent id when we have instant speed 
+    blocks: dict[int, list[int]] = field(default_factory=dict) # attacker_idx -> [blocker_idxs]
+
+
 @dataclass(slots=True)
 class PlayerState:
     life: int = 20
@@ -94,6 +107,7 @@ class GameState:
     terminal: bool = False
     winner: Optional[int] = None
     loser: Optional[int] = None
+    combat: Optional[CombatState] = None
 
     def opp_idx(self, idx: Optional[int] = None) -> int:
         i = self.active if idx is None else idx

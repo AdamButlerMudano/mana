@@ -1,8 +1,8 @@
-from typing import List
+from typing import List, Dict
 import copy
 import random
 
-from .state import Card, CardType, GameState, PlayerState, LandPermanent, CreaturePermanent, Phase
+from .state import Card, CardType, GameState, PlayerState, LandPermanent, CreaturePermanent, Phase, CombatState, CombatStep
 from .errors import IllegalAction
 
 OPENING_HAND = 7
@@ -163,40 +163,49 @@ def begin_combat(gs: GameState) -> None:
     if gs.phase != Phase.MAIN:
         raise IllegalAction('Must be in MAIN phase to begin COMBAT.')
     gs.phase = Phase.COMBAT
+    gs.combat = CombatState(step=CombatStep.DECLARE_ATTACKERS, defending=gs.opp_idx())
 
 
-def declare_attackers(gs: GameState, attacker_indices: list[int]) -> None:
-    """Declare attackers in COMBAT.
-
+def declare_attackers(
+        gs: GameState, 
+        attacker_idxs: list[int]
+        ) -> None:
+    """Declare attackers in COMBAT:
     - Only untapped non-summoning sick creatures you control may attack.
     - Attacking taps the create.
-    - No blockers.
-    - For now move to END after combat.
+    - Moves to DECLARE_BLOCKERS
     """
 
     if gs.terminal:
         raise IllegalAction('Game already ended')
-    
     if gs.phase != Phase.COMBAT:
         raise IllegalAction('Cannot declare attackers outside of combat')
+    assert gs.combat is not None
+    if gs.combat.step != CombatStep.DECLARE_ATTACKERS:
+        raise IllegalAction('Not in DECLARE_ATTACKERS step')
     
     p = gs.active_player()
     opp = gs.opp_player()
 
     # No attackers so move to END
-    if not attacker_indices:
+    if not attacker_idxs:
+        gs.combat = None
         gs.phase = Phase.END
         return
 
+    # Dedup attackers but preserve order
     seen = set()
-    total_power = 0
-    for i in attacker_indices:
+    dedup_idxs: list[int] = []
+    for i in attacker_idxs:
         if i in seen:
             # Ignore duplicates silently as all attackers will be picked at once. 
             # We can deduplicate when making the action so dont need to confuse things by raising an illegal action here.
-            continue 
+            continue
         seen.add(i)
+        dedup_idxs.append(i)
 
+    # Validate attackers and tap
+    for i in dedup_idxs:
         try:
             creature = p.battlefield_creatures[i]
         except IndexError as e:
@@ -205,21 +214,130 @@ def declare_attackers(gs: GameState, attacker_indices: list[int]) -> None:
             raise IllegalAction('Tapped creature cannot attack.')
         if creature.summoning_sick:
             raise IllegalAction('Summoning sick creature cannot attack.')
-
         creature.tapped = True
 
-        # As there is no blocking we can assign all damage to the opp
-        total_power += creature.power
+    gs.combat.attackers = dedup_idxs
+    gs.combat.blocks.clear()
+    gs.combat.step = CombatStep.DECLARE_BLOCKERS
 
-    opp.life -= total_power
 
-    # Check for lethal
+def declare_blockers(gs: GameState, assignments: Dict[int, List[int]]) -> None: 
+    """
+    Defending player declares blockers:
+    - assignments maps attacker_idx-> [blocker_idx, ...]
+    - Blocker can be summoning sick but not tapped
+    - Each blocker can only be assigned to 1 attacker
+    - Moves to DAMAGE
+    """
+    if gs.terminal:
+        raise IllegalAction('Game already ended')
+    if gs.phase != Phase.COMBAT:
+        raise IllegalAction('Cannot declare attackers outside of combat')
+    assert gs.combat is not None
+    if gs.combat.step != CombatStep.DECLARE_BLOCKERS:
+        raise IllegalAction('Not in DECLARE_BLOCKERS step')
+
+    opp = gs.opp_player()
+
+    # Validate blockers
+    used_blockers: set[int] = set()
+    valid_attackers = set(gs.combat.attackers)
+    for a_idx, b_idxs in assignments.items():
+        if a_idx not in valid_attackers:
+            raise IllegalAction('Block assigned to non-declared attacker')
+        for b_idx in b_idxs:
+            if b_idx in used_blockers:
+                raise IllegalAction('Blocker already declare against other attacker.')
+            used_blockers.add(b_idx)
+            try:
+                blk = opp.battlefield_creatures[b_idx]
+            except IndexError as e:
+                raise IllegalAction('Blocker index out of range') from e
+            if blk.tapped:
+                raise IllegalAction('Tapped creature cannot block')
+    
+    gs.combat.blocks = assignments
+    gs.combat.step = CombatStep.DAMAGE
+
+
+def resolve_damage(gs: GameState) -> None:
+    """
+    Apply combat damage to creatures and opp then cleanup:
+    - Unblocked attackers deal damage direct to opp
+    - Blocked attackers assign power across blockers in listed order
+    - Lethal must be assigned before moving to next blocker
+    - Resolve damage, sweep for destroyed creatures, mark terminal if opp life <= 0
+    """
+    if gs.terminal:
+        raise IllegalAction('Game already ended')
+    if gs.phase != Phase.COMBAT:
+        raise IllegalAction('Cannot declare attackers outside of combat')
+    assert gs.combat is not None
+    if gs.combat.step != CombatStep.DAMAGE:
+        raise IllegalAction('Not in DAMAGE step')
+
+    p = gs.active_player()
+    opp = gs.opp_player()
+
+    attackers = gs.combat.attackers
+    blocks = gs.combat.blocks
+
+    # Assign attacker dmg to blockers
+    for a_idx in attackers:
+        a_c = p.battlefield_creatures[a_idx]
+        assigned = 0
+        if a_idx in blocks and blocks[a_idx]:
+            for b_idx in blocks[a_idx]:
+                b_c = opp.battlefield_creatures[b_idx]
+                remaining_attack_power = a_c.power - assigned
+                if remaining_attack_power <= 0:
+                    break
+                required_lethal = max(0, b_c.toughness - b_c.damage)
+                dmg_to_assign = remaining_attack_power if remaining_attack_power <= required_lethal else required_lethal
+                if dmg_to_assign == 0 and remaining_attack_power > 0:
+                    pass
+                else:
+                    b_c.damage += dmg_to_assign
+                    assigned += dmg_to_assign
+    
+    # Assign unblocked attacker dmg to opp
+    player_dmg = 0
+    for a_idx in attackers:
+        if a_idx not in blocks.keys():
+            player_dmg += p.battlefield_creatures[a_idx].damage
+
+    # Assign blocker dmg to attacker
+    for a_idx, b_idxs in blocks.items():
+        a_c = p.battlefield_creatures[a_idx]
+        for b_idx in b_idxs:
+            b_c = opp.battlefield_creatures[b_idx]
+            a_c.damage += b_c.power
+
+    # Resolve dmg
+    _sweep_creature_lethal(p.battlefield_creatures, p.graveyard)
+    _sweep_creature_lethal(opp.battlefield_creatures, opp.graveyard)    
+    opp.life -= player_dmg
+
+    # Check for player lethal
     if opp.life <= 0:
         gs.terminal = True
         gs.winner = gs.active
         gs.loser = gs.opp_idx()
 
+    gs.combat = None
     gs.phase = Phase.END
+
+
+def _sweep_creature_lethal(creatures: list[CreaturePermanent], graveyard: list) -> None:
+    """Move creatures dealt enough damage to destroy them to the graveyard."""
+    survivors: List[CreaturePermanent] = []
+    for c in creatures:
+        if c.damage >= c.toughness:
+            c.damage = 0
+            graveyard.append(c.card)
+        else:
+            survivors.append(c)
+    creatures[:] = survivors
 
 
 # END TURN ========================================================================================
